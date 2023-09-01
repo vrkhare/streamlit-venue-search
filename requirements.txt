@@ -5,3 +5,4 @@ transformers
 langchain
 pyzipcode
 scikit-learn
+torch

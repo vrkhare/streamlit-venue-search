@@ -1,4 +1,4 @@
-geopy
+nltk
 pinecone-client
 usaddress
 transformers

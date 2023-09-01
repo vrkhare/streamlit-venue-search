@@ -1,0 +1,7 @@
+geopy
+pinecone-client
+usaddress
+transformers
+langchain
+pyzipcode
+scikit-learn

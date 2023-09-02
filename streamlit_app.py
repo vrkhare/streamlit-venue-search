@@ -76,7 +76,7 @@ def hybrid_query(question, zipc_list, alpha, top_k):
     # print(sparse_vec)
 
     conditions = {
-        'birthday' : {'$in': ['high', 'medium']},
+        'site_birthday_prominence' : {'$in': ['high', 'medium']},
         'zipcode': {'$in': zipc_list}
     }
 

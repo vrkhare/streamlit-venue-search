@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import json
 import nltk
 import string
 from nltk.corpus import wordnet 
@@ -307,21 +308,21 @@ def search_venues(zip, radius, query, synonyms, alpha):
 
     refined_results = {}
     for result in results['matches']:
-        if result['metadata']['site'] not in refined_results:
-            refined_results[result['metadata']['site']] = {}
-            refined_results[result['metadata']['site']]['avg_score'] = result['score'] / result['metadata']['chunks']
-            refined_results[result['metadata']['site']]['max_score'] = result['score']
+        doc_id = result['id'].split("_")[0]
+        if doc_id not in refined_results:
+            refined_results[doc_id] = {}
+            refined_results[doc_id]['avg_score'] = result['score'] / result['metadata']['chunks']
+            refined_results[doc_id]['max_score'] = result['score']
             for key, values in result['metadata'].items():
-                refined_results[result['metadata']['site']][key] = values
-            refined_results[result['metadata']['site']]['rationale'] = closest_query_phrase_match(result['metadata']['description'], query, synonyms)
-            # refined_results[result['metadata']['site']]['rationale'] = closest_token_match(result['metadata']['description'], query)
+                refined_results[doc_id][key] = values
+            refined_results[doc_id]['rationale'] = closest_query_phrase_match(result['metadata']['description'], query, synonyms)
         else:
-            refined_results[result['metadata']['site']]['avg_score'] += result['score'] / result['metadata']['chunks']
-            if result['score'] > refined_results[result['metadata']['site']]['max_score']:
-                refined_results[result['metadata']['site']]['max_score'] = result['score']
+            refined_results[doc_id]['avg_score'] += result['score'] / result['metadata']['chunks']
+            if result['score'] > refined_results[doc_id]['max_score']:
+                refined_results[doc_id]['max_score'] = result['score']
 
-        # if result['metadata']['site'] == "https://lightingartstudios.com/":
-        #     print(json.dumps(result, default=str, indent=4))
+        #if result['metadata']['site'] == "https://lightingartstudios.com/" or "bellevuestudio.com" in result['metadata']['site']:
+        #    print(json.dumps(result, default=str, indent=4))
 
     
     return refined_results

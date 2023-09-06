@@ -8,7 +8,6 @@ from nltk.corpus import wordnet
 from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
 
-from collections import Counter
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -21,15 +20,18 @@ from pyzipcode import ZipCodeDatabase
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 # Stemmer 
-stemmer = PorterStemmer()
-nltk.download('wordnet')
-nltk.download('stopwords')
+
+@st.cache_resource
+def init_nltk():
+    nltk.download('wordnet')
+    nltk.download('stopwords')
+    return PorterStemmer()
 
 
 # Load the sentence embedding model
 # https://www.sbert.net/docs/pretrained_models.html (all-MiniLM-L6-v2 is a good trade-off; paraphrase-MiniLM-L3-v2 is fastest)
 # mini_lm = SentenceTransformer('paraphrase-MiniLM-L6-v2')
-mini_lm = SentenceTransformer('paraphrase-MiniLM-L3-v2')
+# mini_lm = SentenceTransformer('paraphrase-MiniLM-L3-v2')
 
 def find_nearby_zipcodes_pyzipcode(zipcode, max_distance_miles):
     # ref https://stackoverflow.com/questions/35047031/could-i-use-python-to-retrieve-a-number-of-zip-code-within-a-radius
@@ -77,7 +79,6 @@ def hybrid_query(question, zipc_list, sec_chunked, alpha, top_k):
         pinecone_index_name = config.PINECONE_INDEX_NAME_NEW
 
     pinecone.init(api_key=api_key, environment=environment)
-    
     index = pinecone.Index(pinecone_index_name)
     # print(sparse_vec)
 
@@ -219,7 +220,7 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
     doc_tokens = text_segment.split()
 
     # Stem tokens
-    
+    stemmer = init_nltk()
     doc_stems = [stemmer.stem(token).lower() for token in doc_tokens] 
     stemmed_doc = ' '.join(doc_stems)
 
@@ -252,7 +253,7 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
 
     return best_match
 
-def closest_match_fast(text_segment, search_query_embedding):
+# def closest_match_fast(text_segment, search_query_embedding):
     # uses a mini-lm to compare query with every sentence in the text_segment and find the one which is closest to the query
     # List of sentences in the text segment
     sentences = text_segment.split('. ')

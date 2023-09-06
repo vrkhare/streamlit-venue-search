@@ -3,11 +3,19 @@ from collections import Counter
 from transformers import AutoTokenizer, AutoModel
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.text_splitter import SentenceTransformersTokenTextSplitter
+import streamlit as st
 
-print(f"Loading the pretrained model {config.MODEL_NAME}")
-tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
-model = AutoModel.from_pretrained(config.MODEL_NAME)
-print("done loading...")
+
+@st.cache_data
+def load_pretrained_model():
+    print(f"Loading the pretrained model {config.MODEL_NAME}")
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
+    model = AutoModel.from_pretrained(config.MODEL_NAME)
+    print("done loading...")
+    return tokenizer, model
+
+tokenizer, model = load_pretrained_model()
+
 
 # https://python.langchain.com/docs/modules/data_connection/document_transformers/text_splitters/split_by_token#sentencetransformers
 
@@ -127,7 +135,7 @@ def create_doc_view(record):
     return text
 
 
-def vectorize_dictionary(record, chunk_size):
+# def vectorize_dictionary(record, chunk_size):
     """
     Returns vectors of the chunks of the data in each venue
     """

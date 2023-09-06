@@ -21,11 +21,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 # Stemmer 
 
-@st.cache_resource
-def init_nltk():
-    nltk.download('wordnet')
-    nltk.download('stopwords')
-    return PorterStemmer()
+
+stemmer = PorterStemmer()
+nltk.download('wordnet')
+nltk.download('stopwords')
 
 
 # Load the sentence embedding model
@@ -220,7 +219,7 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
     doc_tokens = text_segment.split()
 
     # Stem tokens
-    stemmer = init_nltk()
+    
     doc_stems = [stemmer.stem(token).lower() for token in doc_tokens] 
     stemmed_doc = ' '.join(doc_stems)
 

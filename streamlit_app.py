@@ -52,7 +52,7 @@ def hybrid_scale(dense, sparse, alpha: float):
     return hdense, hsparse
 
 
-def hybrid_query(question, zipc_list, alpha, top_k):
+def hybrid_query(question, zipc_list, sec_chunked, alpha, top_k):
     # https://www.pinecone.io/learn/vector-search-filtering/
     # convert the question into a sparse vector
     sparse_vec = generate_sparse_vectors(question)
@@ -67,9 +67,14 @@ def hybrid_query(question, zipc_list, alpha, top_k):
         dense_vec, sparse_vec, alpha
     )
     # query pinecone with the query parameters
-    environment=config.PINECONE_ENV
-    pinecone_index_name = config.PINECONE_INDEX_NAME
-    api_key = st.secrets["PINECONE_API_KEY"]
+    if not sec_chunked:
+        environment=config.PINECONE_ENV
+        pinecone_index_name = config.PINECONE_INDEX_NAME
+        api_key = st.secrets["PINECONE_API_KEY"]
+    else:
+        api_key = st.secrets["PINECONE_API_KEY_NEW"]
+        environment=config.PINECONE_ENV_NEW
+        pinecone_index_name = config.PINECONE_INDEX_NAME_NEW
 
     pinecone.init(api_key=api_key, environment=environment)
     
@@ -297,10 +302,10 @@ def closest_match(text_segment, search_query):
     return most_similar_sentence
 
 
-def search_venues(zip, radius, query, synonyms, alpha):
+def search_venues(zip, radius, query, synonyms, sec_chunked, alpha):
     zipcode_list = find_nearby_zipcodes_pyzipcode(zip, radius)
     # print(f"searching for venues in {zipcode_list}")
-    results = hybrid_query(query, zipcode_list, alpha, top_k=50)
+    results = hybrid_query(query, zipcode_list, sec_chunked, alpha, top_k=50)
     # print(results)
 
     # Encode the search query
@@ -324,6 +329,9 @@ def search_venues(zip, radius, query, synonyms, alpha):
         #if result['metadata']['site'] == "https://lightingartstudios.com/" or "bellevuestudio.com" in result['metadata']['site']:
         #    print(json.dumps(result, default=str, indent=4))
 
+        # if "monsterminigolf.com" in result['metadata']['site']:
+        #     print(json.dumps(result, default=str, indent=4))
+
     
     return refined_results
 
@@ -342,8 +350,9 @@ if __name__ == "__main__":
         cols[4].write('')
         cols[3].write('')
         cols[4].write('')
-        cols[3].write('')
+        
         synonyms = cols[3].checkbox("Synomyms for rationale")
+        sec_chunked = cols[3].checkbox("Section Chunked Index")
         
     
         if not query and not interest:
@@ -355,7 +364,7 @@ if __name__ == "__main__":
         # Search button
             if cols[4].button("Search"):
                 # Perform search based on user inputs
-                results = search_venues(zip, radius, clean_query(query), synonyms, alpha)
+                results = search_venues(zip, radius, clean_query(query), synonyms, sec_chunked, alpha)
                 
                 # Display results in a table
                 # df = pd.DataFrame(results)

@@ -7,13 +7,14 @@ import string
 from nltk.corpus import wordnet 
 from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
+import torch
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 
 import pinecone
-from venuehybridsearch import generate_sparse_vectors, tokenizer, model
+from venuehybridsearch import generate_sparse_vectors, tokenizer, model, tokenizer_baai, model_baai
 import config
 from pyzipcode import ZipCodeDatabase
 
@@ -53,14 +54,26 @@ def hybrid_scale(dense, sparse, alpha: float):
     return hdense, hsparse
 
 
-def hybrid_query(question, zipc_list, sec_chunked, alpha, top_k):
+def hybrid_query(question, zipc_list, baai_model, alpha, top_k):
     # https://www.pinecone.io/learn/vector-search-filtering/
     # convert the question into a sparse vector
-    sparse_vec = generate_sparse_vectors(question)
+    sparse_vec = generate_sparse_vectors(question, baai_model)
     # convert the question into a dense vector
-    inputs = tokenizer(question, padding=True, truncation=True, return_tensors="pt")
-    outputs = model(**inputs)
-    vectr = outputs.pooler_output.detach().numpy().flatten()
+    if not baai_model:
+        inputs = tokenizer(question, padding=True, truncation=True, return_tensors="pt")
+        outputs = model(**inputs)
+        vectr = outputs.pooler_output.detach().numpy().flatten()
+    else:
+        # inputs = tokenizer_baai(question, padding=True, truncation=True, return_tensors="pt")
+        # for s2p(short query to long passage) retrieval task, add an instruction to query (not add instruction for passages)
+        # ref for instruction: https://github.com/FlagOpen/FlagEmbedding/tree/master#model-list
+        inputs = tokenizer_baai(config.MODEL_NEW_INSTRUCTION+question, padding=True, truncation=True, return_tensors='pt')
+        outputs = model_baai(**inputs)
+        # Perform pooling. In this case, cls pooling.
+        vectr = outputs[0][:, 0]
+        # normalize embeddings
+        vectr = torch.nn.functional.normalize(vectr, p=2, dim=1)[0]
+    
     dense_vec = vectr.tolist()
     # scale alpha with hybrid_scale
     # print(f"query: {question}; sparse-vector: {sparse_vec}; dense-vector: {dense_vec}")
@@ -68,14 +81,14 @@ def hybrid_query(question, zipc_list, sec_chunked, alpha, top_k):
         dense_vec, sparse_vec, alpha
     )
     # query pinecone with the query parameters
-    if not sec_chunked:
-        environment=config.PINECONE_ENV
-        pinecone_index_name = config.PINECONE_INDEX_NAME
-        api_key = st.secrets["PINECONE_API_KEY"]
-    else:
-        api_key = st.secrets["PINECONE_API_KEY_NEW"]
+    if not baai_model:
         environment=config.PINECONE_ENV_NEW
         pinecone_index_name = config.PINECONE_INDEX_NAME_NEW
+        api_key = st.secrets["PINECONE_API_KEY_NEW"]
+    else:
+        api_key = st.secrets["PINECONE_API_KEY"]
+        environment=config.PINECONE_ENV
+        pinecone_index_name = config.PINECONE_INDEX_NAME
 
     pinecone.init(api_key=api_key, environment=environment)
     index = pinecone.Index(pinecone_index_name)
@@ -273,7 +286,7 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
     return most_similar_sentence
 
 
-def closest_match(text_segment, search_query):
+# def closest_match(text_segment, search_query):
     sentences = text_segment.split('. ')
 
     # Encode the search query
@@ -302,10 +315,10 @@ def closest_match(text_segment, search_query):
     return most_similar_sentence
 
 
-def search_venues(zip, radius, query, synonyms, sec_chunked, alpha):
+def search_venues(zip, radius, query, synonyms, baai_model, alpha):
     zipcode_list = find_nearby_zipcodes_pyzipcode(zip, radius)
     # print(f"searching for venues in {zipcode_list}")
-    results = hybrid_query(query, zipcode_list, sec_chunked, alpha, top_k=50)
+    results = hybrid_query(query, zipcode_list, baai_model, alpha, top_k=50)
     # print(results)
 
     # Encode the search query
@@ -352,7 +365,7 @@ if __name__ == "__main__":
         cols[4].write('')
         
         synonyms = cols[3].checkbox("Synomyms for rationale")
-        sec_chunked = cols[3].checkbox("Section Chunked Index")
+        baai_model = cols[3].checkbox("Use the BAAI model")
         
     
         if not query and not interest:
@@ -364,7 +377,7 @@ if __name__ == "__main__":
         # Search button
             if cols[4].button("Search"):
                 # Perform search based on user inputs
-                results = search_venues(zip, radius, clean_query(query), synonyms, sec_chunked, alpha)
+                results = search_venues(zip, radius, clean_query(query), synonyms, baai_model, alpha)
                 
                 # Display results in a table
                 # df = pd.DataFrame(results)

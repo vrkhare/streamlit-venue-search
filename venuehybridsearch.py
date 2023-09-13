@@ -16,6 +16,17 @@ def load_pretrained_model():
 
 tokenizer, model = load_pretrained_model()
 
+@st.cache_data
+def load_pretrained_model_baai():
+    print(f"Loading the pretrained model {config.MODEL_NAME_NEW}")
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME_NEW)
+    model = AutoModel.from_pretrained(config.MODEL_NAME_NEW)
+    model.eval()
+    print("done loading...")
+    return tokenizer, model
+
+tokenizer_baai, model_baai = load_pretrained_model_baai()
+
 
 # https://python.langchain.com/docs/modules/data_connection/document_transformers/text_splitters/split_by_token#sentencetransformers
 
@@ -236,18 +247,25 @@ def build_dict(input_batch):
     return sparse_emb
 
 
-def generate_sparse_vectors(context_batch):
+def generate_sparse_vectors(context_batch, baai_model):
     # TODO: from https://www.pinecone.io/learn/hybrid-search-intro/
     # Note that the generate_sparse_vectors method for creating sparse
     # vectors is not optimal. We recommend using either BM25 or SPLADE sparse vectors.
     # However, to use either of these methods, we need corpus of documents.
 
     # create batch of input_ids
-    inputs = tokenizer(
-        context_batch, padding=True,
-        truncation=True,
-        max_length=512
-    )['input_ids']
+    if not baai_model:
+        inputs = tokenizer(
+            context_batch, padding=True,
+            truncation=True,
+            max_length=512
+        )['input_ids']
+    else:
+        inputs = tokenizer_baai(
+            context_batch, padding=True,
+            truncation=True,
+            max_length=512
+        )['input_ids']        
     #    print(inputs)
     # create sparse dictionaries
     sparse_embeds = build_dict(inputs)

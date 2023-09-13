@@ -4,7 +4,7 @@ PVENUE_FIELDS_FOR_SEARCH = ['summary', 'description']
 PINECONE_ENV = "us-west1-gcp-free"
 PINECONE_INDEX_NAME = "hybrid-venue-search"
 # SEMANTIC SEARCH MODEL DETAILS
-MODEL_NAME_NEW = "BAAI/bge-base-en"
+MODEL_NAME_NEW = "BAAI/bge-base-en-v1.5"
 MODEL_NEW_INSTRUCTION = "Represent this sentence for searching relevant passages:"
 
 # new index with the old MPNET model

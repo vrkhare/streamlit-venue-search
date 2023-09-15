@@ -1,10 +1,14 @@
+import re
 import config
+import string
+import pickle
+import numpy as np
 from collections import Counter
 from transformers import AutoTokenizer, AutoModel
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.text_splitter import SentenceTransformersTokenTextSplitter
 import streamlit as st
-
+from nltk.corpus import stopwords
 
 @st.cache_data
 def load_pretrained_model():
@@ -26,6 +30,20 @@ def load_pretrained_model_baai():
     return tokenizer, model
 
 tokenizer_baai, model_baai = load_pretrained_model_baai()
+
+def dense_to_sparse(row):
+    # Find the indices of non-zero entries
+    indices = np.nonzero(row)[0]
+    # Get the values of non-zero entries
+    values = row[indices]
+    return {'indices': indices.tolist(), 'values': values.tolist()}
+
+def get_document_sparse_embeddings(document, model_filename):
+    # this will get the sparse embeddings for one document at the time
+    # can be used for queries at the time of retrieval   
+    with open(model_filename, 'rb') as f:
+        bm25 = pickle.load(f)
+    return dense_to_sparse(bm25.transform([clean_query(document)])[0]) 
 
 
 # https://python.langchain.com/docs/modules/data_connection/document_transformers/text_splitters/split_by_token#sentencetransformers
@@ -245,6 +263,27 @@ def build_dict(input_batch):
 
     # return sparse_emb list
     return sparse_emb
+
+def clean_query(qry):
+    # List of common words to remove
+    stop_words = set(stopwords.words('english'))
+
+    # List of punctuations to remove
+    punctuations = set(string.punctuation) 
+
+    # Tokenize query
+    query_tokens = qry.split() 
+
+    # Split off trailing punctuation
+    query_tokens = [re.sub(r'([^\s\w]$)','',token) for token in query_tokens]
+
+    # Filter tokens
+    filtered_tokens = [token for token in query_tokens if token not in stop_words and token not in punctuations]
+
+    # Join filtered tokens 
+    cleaned_query = " ".join(filtered_tokens)
+
+    return cleaned_query
 
 
 def generate_sparse_vectors(context_batch, baai_model):

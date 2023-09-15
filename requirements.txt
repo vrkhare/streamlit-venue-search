@@ -4,6 +4,6 @@ usaddress
 transformers
 langchain
 pyzipcode
-scikit-learn
+scikit-learn==1.2.2
 torch
 sentence_transformers

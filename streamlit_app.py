@@ -3,10 +3,9 @@ import sys
 import re
 import json
 import nltk
-import string
+
 from nltk.corpus import wordnet 
 from nltk.stem import PorterStemmer
-from nltk.corpus import stopwords
 import torch
 
 import streamlit as st
@@ -14,7 +13,7 @@ import pandas as pd
 import numpy as np
 
 import pinecone
-from venuehybridsearch import generate_sparse_vectors, tokenizer, model, tokenizer_baai, model_baai
+from venuehybridsearch import generate_sparse_vectors, get_document_sparse_embeddings, clean_query, tokenizer, model, tokenizer_baai, model_baai
 import config
 from pyzipcode import ZipCodeDatabase
 
@@ -54,10 +53,13 @@ def hybrid_scale(dense, sparse, alpha: float):
     return hdense, hsparse
 
 
-def hybrid_query(question, zipc_list, baai_model, alpha, top_k):
+def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
     # https://www.pinecone.io/learn/vector-search-filtering/
     # convert the question into a sparse vector
-    sparse_vec = generate_sparse_vectors(question, baai_model)
+    if not bm25:
+        sparse_vec = generate_sparse_vectors(question, baai_model)
+    else:
+        sparse_vec = get_document_sparse_embeddings(question, bm25_model_filename)
     # convert the question into a dense vector
     if not baai_model:
         inputs = tokenizer(question, padding=True, truncation=True, return_tensors="pt")
@@ -85,11 +87,15 @@ def hybrid_query(question, zipc_list, baai_model, alpha, top_k):
         environment=config.PINECONE_ENV_NEW
         pinecone_index_name = config.PINECONE_INDEX_NAME_NEW
         api_key = st.secrets["PINECONE_API_KEY_NEW"]
-    else:
+    elif not bm25:
         api_key = st.secrets["PINECONE_API_KEY"]
         environment=config.PINECONE_ENV
         pinecone_index_name = config.PINECONE_INDEX_NAME
-
+    else:
+        api_key = st.secrets["PINECONE_API_KEY_BM25"]
+        environment=config.PINECONE_ENV_BM25
+        pinecone_index_name = config.PINECONE_INDEX_NAME_BM25
+    
     pinecone.init(api_key=api_key, environment=environment)
     index = pinecone.Index(pinecone_index_name)
     # print(sparse_vec)
@@ -180,27 +186,6 @@ def closest_token_match(text_segment, search_query):
             best_matching_sentence = sentence
 
     return re.sub(r'\b(' + '|'.join(search_query.split()) + r')\b', r'**\1**', best_matching_sentence.lower())
-
-def clean_query(qry):
-    # List of common words to remove
-    stop_words = set(stopwords.words('english'))
-
-    # List of punctuations to remove
-    punctuations = set(string.punctuation) 
-
-    # Tokenize query
-    query_tokens = qry.split() 
-
-    # Split off trailing punctuation
-    query_tokens = [re.sub(r'([^\s\w]$)','',token) for token in query_tokens]
-
-    # Filter tokens
-    filtered_tokens = [token for token in query_tokens if token not in stop_words and token not in punctuations]
-
-    # Join filtered tokens 
-    cleaned_query = " ".join(filtered_tokens)
-
-    return cleaned_query
 
 def closest_query_phrase_match(text_segment, search_query, synonyms=False):
     # TODO: the following only works with two word phrase so far
@@ -315,10 +300,11 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
     return most_similar_sentence
 
 
-def search_venues(zip, radius, query, synonyms, baai_model, alpha):
+def search_venues(zip, radius, query, synonyms, baai_model, bm25, alpha):
     zipcode_list = find_nearby_zipcodes_pyzipcode(zip, radius)
     # print(f"searching for venues in {zipcode_list}")
-    results = hybrid_query(query, zipcode_list, baai_model, alpha, top_k=50)
+    results = hybrid_query(query, zipcode_list, baai_model, bm25, alpha, top_k=100)
+    # print(f"Number of results returned: {len(results['matches'])}")
     # print(results)
 
     # Encode the search query
@@ -349,24 +335,24 @@ def search_venues(zip, radius, query, synonyms, baai_model, alpha):
     return refined_results
 
 if __name__ == "__main__":
+    bm25_model_filename = "bm25.pkl"
+    
     st.title("Partify Venue Search")
     
     # Input fields
     interest = st.text_input("Child's Interest:", "")
-    query = st.text_input("Search Query:", "go karting; bowling")
+    query = st.text_input("Search Query:", "martial arts")
     main_grid = st.container()
     with main_grid:
         cols = st.columns([1,1,1,4, 2])
-        zip = cols[0].text_input("Zipcode:", "98052")
-        radius = int(cols[1].text_input("Miles:", "10"))
+        zip = cols[0].text_input("Zipcode:", "98045")
+        radius = int(cols[1].text_input("Miles:", "20"))
         alpha = float(cols[2].text_input("Alpha:", value="0.75"))
         cols[4].write('')
-        cols[3].write('')
         cols[4].write('')
-        
         synonyms = cols[3].checkbox("Synomyms for rationale")
         baai_model = cols[3].checkbox("Use the BAAI model")
-        
+        bm25 = cols[3].checkbox("BM25 sparse embed with BAAI?")
     
         if not query and not interest:
             st.warning("Enter either the search query or child's interest. When both are given, search query is used")
@@ -377,7 +363,7 @@ if __name__ == "__main__":
         # Search button
             if cols[4].button("Search"):
                 # Perform search based on user inputs
-                results = search_venues(zip, radius, clean_query(query), synonyms, baai_model, alpha)
+                results = search_venues(zip, radius, clean_query(query), synonyms, baai_model, bm25, alpha)
                 
                 # Display results in a table
                 # df = pd.DataFrame(results)

@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer
 # Stemmer
 stemmer = PorterStemmer()
 
-@st.cache_resource
+@st.cache_data
 def download_nltk_package():
     nltk.download('wordnet')
     nltk.download('stopwords')

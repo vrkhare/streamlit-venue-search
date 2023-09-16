@@ -27,6 +27,8 @@ def download_nltk_package():
     nltk.download('wordnet')
     nltk.download('stopwords')
 
+download_nltk_package()
+
 def find_nearby_zipcodes_pyzipcode(zipcode, max_distance_miles):
     # ref https://stackoverflow.com/questions/35047031/could-i-use-python-to-retrieve-a-number-of-zip-code-within-a-radius
     zcdb = ZipCodeDatabase()

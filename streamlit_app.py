@@ -19,18 +19,13 @@ from pyzipcode import ZipCodeDatabase
 
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-# Stemmer 
-
-
+# Stemmer
 stemmer = PorterStemmer()
-nltk.download('wordnet')
-nltk.download('stopwords')
 
-
-# Load the sentence embedding model
-# https://www.sbert.net/docs/pretrained_models.html (all-MiniLM-L6-v2 is a good trade-off; paraphrase-MiniLM-L3-v2 is fastest)
-# mini_lm = SentenceTransformer('paraphrase-MiniLM-L6-v2')
-# mini_lm = SentenceTransformer('paraphrase-MiniLM-L3-v2')
+@st.cache_resource
+def download_nltk_package():
+    nltk.download('wordnet')
+    nltk.download('stopwords')
 
 def find_nearby_zipcodes_pyzipcode(zipcode, max_distance_miles):
     # ref https://stackoverflow.com/questions/35047031/could-i-use-python-to-retrieve-a-number-of-zip-code-within-a-radius
@@ -51,7 +46,6 @@ def hybrid_scale(dense, sparse, alpha: float):
     hdense = [v * alpha for v in dense]
     #  print(hdense,hsparse)
     return hdense, hsparse
-
 
 def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
     # https://www.pinecone.io/learn/vector-search-filtering/
@@ -82,110 +76,40 @@ def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
     dense_vec, sparse_vec = hybrid_scale(
         dense_vec, sparse_vec, alpha
     )
-    # query pinecone with the query parameters
-    if not baai_model:
-        environment=config.PINECONE_ENV_NEW
-        pinecone_index_name = config.PINECONE_INDEX_NAME_NEW
-        api_key = st.secrets["PINECONE_API_KEY_NEW"]
-    elif not bm25:
-        api_key = st.secrets["PINECONE_API_KEY"]
-        environment=config.PINECONE_ENV
-        pinecone_index_name = config.PINECONE_INDEX_NAME
-    else:
-        api_key = st.secrets["PINECONE_API_KEY_BM25"]
-        environment=config.PINECONE_ENV_BM25
-        pinecone_index_name = config.PINECONE_INDEX_NAME_BM25
     
+    api_key = st.secrets["PINECONE_API_KEY"]
+    environment=config.PINECONE_ENV
+    pinecone_index_name = config.PINECONE_INDEX_NAME
+    namespace = ""
+    if not baai_model:
+        namespace = "M1_C3_"
+    else:
+        namespace = "M2_C3_"
+    
+    if not bm25:
+        namespace += "S1"
+    else:
+        namespace += "S2"
+
     pinecone.init(api_key=api_key, environment=environment)
     index = pinecone.Index(pinecone_index_name)
     # print(sparse_vec)
 
     conditions = {
-        'site_birthday_prominence' : {'$in': ['high', 'medium']},
         'zipcode': {'$in': zipc_list}
     }
-
-    # print(dense_vec)
-    # print(sparse_vec)
-
+    
     res = []
     res = index.query(
         vector=dense_vec,
         sparse_vector=sparse_vec,
         top_k=top_k,
         filter=conditions,
-        include_metadata=True
+        include_metadata=True,
+        namespace=namespace
     )
     # return search results as json
     return res
-
-
-def rerank_search_results(results, user_location):
-    """
-    Re-Rank the search results based on various criteria.
-    """
-    ranked_results = []
-
-    for result in results:
-        print(result)
-        result = results[result]
-        # print(result)
-        # Calculate the distance from the user-specified location
-        # if result['lat'] == "":
-        #     coords1 = get_coordinates_from_zipcode(result['zipcode'])
-        # else:
-        #     coords1 = (result['lat'],result['long'])
-        # coords2 = get_coordinates_from_zipcode(user_location)
-        # distance = calculate_car_distance(coords1, coords2)
-        # result['distance'] = distance
-        # distance = distance/1000
-        bp = result['birthday']
-        if bp == 'none':
-            bp = 0
-        elif bp == 'low':
-            bp = 1
-        elif bp == 'medium':
-            bp = 2
-        else:
-            bp = 3
-        if result['ratings'] != "":
-            # Calculate the score based on different criteria
-            score = (
-                    0.8 * result['score'] +  # Distance (weighted)
-                    0 * bp +  # Site Birthday Prominence (weighted)
-                    0 * result['ratings']  # rating (weighted)
-            )
-        else:
-            score = (
-                    0.8 * result['score'] +  # Distance (weighted)
-                    0 * bp  # Site Birthday Prominence (weighted)
-            )
-
-        ranked_results.append({'result': result, 'score': score})
-
-    # Sort the ranked results based on the score in descending order
-    ranked_results.sort(key=lambda x: x['score'], reverse=True)
-
-    return ranked_results
-
-def closest_token_match(text_segment, search_query):
-    # uses tokens from the search query and returns the sentence that contains most tokens
-    sentences = re.split(r'[.!?]', text_segment)
-    sentences = [s.strip() for s in sentences if s.strip()]
-
-    max_matched_tokens = 0
-    best_matching_sentence = ""
-
-    for sentence in sentences:
-        tokens_in_sentence = sentence.lower().split()
-        tokens_in_query = search_query.lower().split()
-        matched_tokens = [token for token in tokens_in_sentence if token in tokens_in_query]
-        
-        if len(matched_tokens) > max_matched_tokens:
-            max_matched_tokens = len(matched_tokens)
-            best_matching_sentence = sentence
-
-    return re.sub(r'\b(' + '|'.join(search_query.split()) + r')\b', r'**\1**', best_matching_sentence.lower())
 
 def closest_query_phrase_match(text_segment, search_query, synonyms=False):
     # TODO: the following only works with two word phrase so far
@@ -227,7 +151,6 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
         query_stems.append(stemmer.stem(token).lower())
         stem_to_query_map[stemmer.stem(token).lower()] = token
 
-
     # Calculate match scores
     match_scores = {}
     for i in range(len(query_stems)-1):
@@ -250,65 +173,12 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
 
     return best_match
 
-# def closest_match_fast(text_segment, search_query_embedding):
-    # uses a mini-lm to compare query with every sentence in the text_segment and find the one which is closest to the query
-    # List of sentences in the text segment
-    sentences = text_segment.split('. ')
-
-    # Calculate cosine similarity between search query and each sentence
-    similarities = []
-    for sentence in sentences:
-        sentence_embedding = mini_lm.encode([sentence])
-        similarity = cosine_similarity(search_query_embedding, sentence_embedding)[0][0]
-        similarities.append(similarity)
-
-    # Find the index of the most similar sentence
-    most_similar_index = similarities.index(max(similarities))
-
-    # Get the most similar sentence
-    most_similar_sentence = sentences[most_similar_index]
-
-    return most_similar_sentence
-
-
-# def closest_match(text_segment, search_query):
-    sentences = text_segment.split('. ')
-
-    # Encode the search query
-    # search_query_embedding = model.encode([search_query])
-    inputs = tokenizer(search_query, padding=True, truncation=True, return_tensors="pt")
-    outputs = model(**inputs)
-    search_query_embedding = outputs.pooler_output.detach().numpy().flatten()
-
-    # Calculate cosine similarity between search query and each sentence
-    sentence_embeddings = []
-    for sentence in sentences:
-        inputs = tokenizer(sentence, padding=True, truncation=True, return_tensors="pt")
-        outputs = model(**inputs)
-        sentence_embedding = outputs.pooler_output.detach().numpy().flatten()
-        sentence_embeddings.append(sentence_embedding)
-
-    # Calculate dot product between search query and sentence embeddings
-    similarity_scores = np.dot(sentence_embeddings, search_query_embedding)
-
-    # Find the index of the most similar sentence
-    most_similar_index = np.argmax(similarity_scores)
-
-    # Get the most similar sentence
-    most_similar_sentence = sentences[most_similar_index]
-
-    return most_similar_sentence
-
-
 def search_venues(zip, radius, query, synonyms, baai_model, bm25, alpha):
     zipcode_list = find_nearby_zipcodes_pyzipcode(zip, radius)
     # print(f"searching for venues in {zipcode_list}")
-    results = hybrid_query(query, zipcode_list, baai_model, bm25, alpha, top_k=100)
+    results = hybrid_query(query, zipcode_list, baai_model, bm25, alpha, top_k=config.NUM_CHUNK_IN_RESULTS)
     # print(f"Number of results returned: {len(results['matches'])}")
     # print(results)
-
-    # Encode the search query
-    # search_query_embedding = mini_lm.encode([query])
 
     refined_results = {}
     for result in results['matches']:
@@ -324,13 +194,6 @@ def search_venues(zip, radius, query, synonyms, baai_model, bm25, alpha):
             refined_results[doc_id]['avg_score'] += result['score'] / result['metadata']['chunks']
             if result['score'] > refined_results[doc_id]['max_score']:
                 refined_results[doc_id]['max_score'] = result['score']
-
-        #if result['metadata']['site'] == "https://lightingartstudios.com/" or "bellevuestudio.com" in result['metadata']['site']:
-        #    print(json.dumps(result, default=str, indent=4))
-
-        # if "monsterminigolf.com" in result['metadata']['site']:
-        #     print(json.dumps(result, default=str, indent=4))
-
     
     return refined_results
 
@@ -344,15 +207,21 @@ if __name__ == "__main__":
     query = st.text_input("Search Query:", "martial arts")
     main_grid = st.container()
     with main_grid:
-        cols = st.columns([1,1,1,4, 2])
+        cols = st.columns([1,1,1,2,2,4])
         zip = cols[0].text_input("Zipcode:", "98045")
         radius = int(cols[1].text_input("Miles:", "20"))
         alpha = float(cols[2].text_input("Alpha:", value="0.75"))
-        cols[4].write('')
-        cols[4].write('')
-        synonyms = cols[3].checkbox("Synomyms for rationale")
-        baai_model = cols[3].checkbox("Use the BAAI model")
-        bm25 = cols[3].checkbox("BM25 sparse embed with BAAI?")
+        synonyms = cols[5].checkbox("Synomyms for rationale")
+        model_name = cols[3].radio("Language Model", ["bge", "mpnet"])
+        if model_name == "bge":
+            baai_model = True
+        else: 
+            baai_model = False
+        sparse_embed = cols[4].radio("Sparse Embedding", ["bm25", "counter"])
+        if sparse_embed == "bm25":
+            bm25 = True
+        else:
+            bm25 = False
     
         if not query and not interest:
             st.warning("Enter either the search query or child's interest. When both are given, search query is used")
@@ -361,20 +230,10 @@ if __name__ == "__main__":
     
         if query:
         # Search button
-            if cols[4].button("Search"):
+            if cols[5].button("Search"):
                 # Perform search based on user inputs
                 results = search_venues(zip, radius, clean_query(query), synonyms, baai_model, bm25, alpha)
-                
-                # Display results in a table
-                # df = pd.DataFrame(results)
-                # transposed_df = df.transpose()[['name', 'score', 'ratings', 'rationale', 'site', 'description']]  # Transpose the DataFrame to display as rows
-                # st.table(transposed_df)
-
                 search_results = pd.DataFrame(results).transpose().reset_index(drop=True)
-
-                # Define CSS styles to limit row height
-                row_height = "50px"  # Set your desired row height
-                row_styles = [{"selector": "tr:hover td", "props": [("max-height", row_height)]}]
 
                 # Display the search results table with custom styling
                 st.dataframe(search_results[['name', 'max_score', 'avg_score', 'ratings', 'rationale', 'site', 'description']])

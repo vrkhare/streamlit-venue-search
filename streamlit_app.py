@@ -180,13 +180,14 @@ def search_venues(zip, radius, query, synonyms, baai_model, bm25, alpha):
     # print(f"searching for venues in {zipcode_list}")
     results = hybrid_query(query, zipcode_list, baai_model, bm25, alpha, top_k=config.NUM_CHUNK_IN_RESULTS)
     # print(f"Number of results returned: {len(results['matches'])}")
-    # print(results)
+    # print(results['matches'][0])
 
     refined_results = {}
     for result in results['matches']:
         doc_id = result['id'].split("_")[0]
         if doc_id not in refined_results:
             refined_results[doc_id] = {}
+            refined_results[doc_id]['_id'] = result['metadata']['_id']
             refined_results[doc_id]['avg_score'] = result['score'] / result['metadata']['chunks']
             refined_results[doc_id]['max_score'] = result['score']
             for key, values in result['metadata'].items():
@@ -211,9 +212,9 @@ if __name__ == "__main__":
     with main_grid:
         cols = st.columns([1,1,1,2,2,4])
         zip = cols[0].text_input("Zipcode:", "98045")
-        radius = int(cols[1].text_input("Miles:", "20"))
+        radius = int(cols[1].text_input("Miles:", "200"))
         alpha = float(cols[2].text_input("Alpha:", value="0.75"))
-        synonyms = cols[5].checkbox("Synomyms for rationale")
+        synonyms = cols[5].checkbox("Synomyms for rationale", value=True)
         model_name = cols[3].radio("Language Model", ["bge", "mpnet"])
         if model_name == "bge":
             baai_model = True
@@ -238,5 +239,5 @@ if __name__ == "__main__":
                 search_results = pd.DataFrame(results).transpose().reset_index(drop=True)
 
                 # Display the search results table with custom styling
-                st.dataframe(search_results[['name', 'max_score', 'avg_score', 'ratings', 'rationale', 'site', 'description']])
+                st.dataframe(search_results[['name', '_id', 'max_score', 'avg_score', 'ratings', 'rationale', 'site', 'description']])
 

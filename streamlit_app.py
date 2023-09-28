@@ -1,12 +1,7 @@
-import os
-import sys
-import re
-import json
 import nltk
 
 from nltk.corpus import wordnet 
 from nltk.stem import PorterStemmer
-import torch
 
 import streamlit as st
 import pandas as pd
@@ -68,9 +63,15 @@ def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
         inputs = tokenizer_baai(config.MODEL_NEW_INSTRUCTION+question, padding=True, truncation=True, return_tensors='pt')
         outputs = model_baai(**inputs)
         # Perform pooling. In this case, cls pooling.
-        vectr = outputs[0][:, 0]
+        # vectr = outputs[0][:, 0]
         # normalize embeddings
-        vectr = torch.nn.functional.normalize(vectr, p=2, dim=1)[0]
+        # vectr = torch.nn.functional.normalize(vectr, p=2, dim=1)[0]
+
+        vectr = outputs[0][:, 0].detach().numpy()  # Convert the PyTorch tensor to a NumPy array
+        # Normalize embeddings using NumPy
+        vectr = vectr / np.linalg.norm(vectr, ord=2, axis=1, keepdims=True)
+        # If you want to access the first normalized vector (assuming there's only one)
+        vectr = vectr[0]
     
     dense_vec = vectr.tolist()
     # scale alpha with hybrid_scale

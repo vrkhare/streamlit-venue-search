@@ -5,5 +5,4 @@ transformers
 langchain
 pyzipcode
 scikit-learn==1.2.2
-torch
 sentence_transformers

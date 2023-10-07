@@ -1,6 +1,7 @@
 import nltk
 
 from nltk.corpus import wordnet 
+import time
 from nltk.stem import PorterStemmer
 
 import streamlit as st
@@ -13,9 +14,41 @@ import config
 from pyzipcode import ZipCodeDatabase
 
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
+# from sentence_transformers import SentenceTransformer
 # Stemmer
 stemmer = PorterStemmer()
+
+pre_db_call_time = db_call_time = post_db_call_time = total_time = time.time()
+start_time = end_time = db_call_start = db_call_end = 0.0
+
+
+@st.cache_resource
+def init_pinecone_db(baai_model, bm25, fixed_length_chunks):
+    environment=config.PINECONE_ENV
+    api_key = st.secrets["PINECONE_API_KEY"]
+    pinecone_index_name = config.PINECONE_INDEX_NAME
+    # api_key = st.secrets["PINECONE_API_KEY_BM25"]
+    # pinecone_index_name = config.PINECONE_INDEX_NAME_BM25
+    namespace = ""
+    if not baai_model:
+        namespace = "M1_"
+    else:
+        namespace = "M2_"
+    
+    if not fixed:
+        namespace += "C3_"
+    else:
+        namespace += "C2_"
+    if not bm25:
+        namespace += "S1"
+    else:
+        namespace += "S2"
+
+    pinecone.init(api_key=api_key, environment=environment)
+    
+    index = pinecone.Index(pinecone_index_name)
+
+    return index, namespace
 
 @st.cache_data
 def download_nltk_package():
@@ -51,6 +84,10 @@ def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
         sparse_vec = generate_sparse_vectors(question, baai_model)
     else:
         sparse_vec = get_document_sparse_embeddings(question, bm25_model_filename)
+        # fallback for out of vocabulary words
+        if len(sparse_vec['indices']) ==0:
+            sparse_vec = get_document_sparse_embeddings("birthday", bm25_model_filename)
+        
     # convert the question into a dense vector
     if not baai_model:
         inputs = tokenizer(question, padding=True, truncation=True, return_tensors="pt")
@@ -79,23 +116,6 @@ def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
     dense_vec, sparse_vec = hybrid_scale(
         dense_vec, sparse_vec, alpha
     )
-    
-    api_key = st.secrets["PINECONE_API_KEY"]
-    environment=config.PINECONE_ENV
-    pinecone_index_name = config.PINECONE_INDEX_NAME
-    namespace = ""
-    if not baai_model:
-        namespace = "M1_C3_"
-    else:
-        namespace = "M2_C3_"
-    
-    if not bm25:
-        namespace += "S1"
-    else:
-        namespace += "S2"
-
-    pinecone.init(api_key=api_key, environment=environment)
-    index = pinecone.Index(pinecone_index_name)
     # print(sparse_vec)
 
     conditions = {
@@ -103,6 +123,8 @@ def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
     }
     
     res = []
+    global db_call_start, db_call_end
+    db_call_start = time.time()
     res = index.query(
         vector=dense_vec,
         sparse_vector=sparse_vec,
@@ -111,10 +133,52 @@ def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
         include_metadata=True,
         namespace=namespace
     )
+    db_call_end = time.time()
     # return search results as json
     return res
 
-def closest_query_phrase_match(text_segment, search_query, synonyms=False):
+def get_query_tokens(synonyms, search_query):
+    syn_set = set()
+    syn_to_query_map = {}
+    orig_query_len = len(search_query.split())
+
+    if synonyms:
+        for word in search_query.split():
+            for syn in wordnet.synsets(word):
+                for w in syn.lemmas():
+                    syn_set.add(w.name())
+                    syn_to_query_map[w.name()] = word
+        expanded_query = search_query + " " + " ".join(syn_set) 
+    else:
+        expanded_query = search_query
+    
+    # Tokenize 
+    query_tokens = expanded_query.split()
+
+    # Stem tokens
+    stem_to_query_map = {}
+    query_stemmed_set = set()
+    for i in range(len(query_tokens)):
+        # unigrams
+        token = query_tokens[i]
+        stem = stemmer.stem(token).lower()
+        query_stemmed_set.add(stem)
+        query_word = token
+        if token in syn_to_query_map:
+            query_word = syn_to_query_map[token]
+        stem_to_query_map[stem] = query_word
+        #bigrams - only with original tokens
+        if i < orig_query_len - 1:
+            next_token = query_tokens[i+1]
+            stem_next = stemmer.stem(next_token).lower()
+            stem_bigram = " ".join([stem, stem_next])
+            orig_bigram = " ".join([token, next_token])
+            query_stemmed_set.add(stem_bigram)
+            stem_to_query_map[stem_bigram] = orig_bigram
+    return query_stemmed_set, stem_to_query_map
+
+
+def closest_query_phrase_match(text_segment, query_stemmed_set, stem_to_query_map):
     # TODO: the following only works with two word phrase so far
     # For each document (text_segment), highlight a word or a phrase from the search query 
     # (search_query)  that matches the best with the document. The 
@@ -125,52 +189,59 @@ def closest_query_phrase_match(text_segment, search_query, synonyms=False):
     # Likewise, three word matches contribute to 3 times the length of the phrase, and so on. 
     # Also, while calculating the matches the original search query is expended using word 
     # synonyms.
-    synonyms = set()
-    
-    search_query = clean_query(search_query)
     text_segment = clean_query(text_segment)
     
-    if synonyms:
-        for word in search_query.split():
-            for syn in wordnet.synsets(word):
-                for w in syn.lemmas():
-                    synonyms.add(w.name())
-        expanded_query = search_query + " " + " ".join(synonyms) 
-    else:
-        expanded_query = search_query
-    
     # Tokenize 
-    query_tokens = expanded_query.split()
     doc_tokens = text_segment.split()
 
     # Stem tokens
-    
     doc_stems = [stemmer.stem(token).lower() for token in doc_tokens] 
-    stemmed_doc = ' '.join(doc_stems)
+    # print(f"query_stemmed_set:{query_stemmed_set}")
+    # print(f"doc_stems: {doc_stems}")
 
-    query_stems = []
-    stem_to_query_map = {}
-    for token in query_tokens:
-        query_stems.append(stemmer.stem(token).lower())
-        stem_to_query_map[stemmer.stem(token).lower()] = token
-
-    # Calculate match scores
-    match_scores = {}
-    for i in range(len(query_stems)-1):
-        phrase = " ".join(query_stems[i:i+2])
-        phrase_orig = " ".join(query_tokens[i:i+2])
-        matches = [phrase in stemmed_doc]
-        if matches.count(True) > 0:
-            match_scores[phrase_orig] = 2 * matches.count(True)
-
-    for word in query_stems:
-        matches = [word in doc_stems]  
-        if matches.count(True) > 0:
-            match_scores[stem_to_query_map[word]] = matches.count(True)
-
-    # Get best match
-    if match_scores:
-        best_match = max(match_scores, key=match_scores.get)
+    # Calculate unigram and bi-gram frequencies in the doc
+    doc_unigram_frequency_map = {}
+    doc_bigram_frequency_map = {}
+    for i in range(len(doc_stems)):
+        token = doc_stems[i]
+        if token in query_stemmed_set:
+            if token in stem_to_query_map:
+                query_token = stem_to_query_map[token] 
+            else:
+                query_token = token
+            
+            if query_token in doc_unigram_frequency_map:
+                doc_unigram_frequency_map[query_token] += 1
+            else:
+                doc_unigram_frequency_map[query_token] = 1
+            if i < len(doc_stems)-1:
+                next_token = doc_stems[i+1]
+                bigram = " ".join([token, next_token])
+                if next_token in stem_to_query_map:
+                    query_next_token = stem_to_query_map[next_token] 
+                else:
+                    query_next_token = next_token
+                if bigram in query_stemmed_set:
+                    if bigram in doc_bigram_frequency_map:
+                        doc_bigram_frequency_map[bigram] += 1
+                    else:
+                        doc_bigram_frequency_map[bigram] = 1
+                    # since the token and next are counted in bi-gram, remove them from unigram freq
+                    doc_unigram_frequency_map[query_token] -= 1
+                    if query_next_token in doc_unigram_frequency_map:
+                        doc_unigram_frequency_map[query_next_token] -= 1
+                    else:
+                        doc_unigram_frequency_map[query_next_token] = -1
+    
+    # check if there is a bi-gram found
+    if doc_bigram_frequency_map:
+        best_match = stem_to_query_map[max(doc_bigram_frequency_map, key=doc_bigram_frequency_map.get)]
+    elif doc_unigram_frequency_map:
+        best_match_unigram = max(doc_unigram_frequency_map, key=doc_unigram_frequency_map.get)
+        if best_match_unigram in stem_to_query_map:
+            best_match = stem_to_query_map[best_match_unigram]
+        else:
+            best_match = best_match_unigram
     else:
         best_match = ""
 
@@ -183,27 +254,30 @@ def search_venues(zip, radius, query, synonyms, baai_model, bm25, alpha):
     # print(f"Number of results returned: {len(results['matches'])}")
     # print(results['matches'][0])
 
+    # query_tokens, query_stems, stem_to_query_map = get_query_tokens(synonyms, clean_query(query))
+    query_stemmed_set, stem_to_query_map = get_query_tokens(synonyms, clean_query(query))
+
     refined_results = {}
     for result in results['matches']:
         doc_id = result['id'].split("_")[0]
         if doc_id not in refined_results:
             refined_results[doc_id] = {}
-            refined_results[doc_id]['_id'] = result['metadata']['_id']
-            refined_results[doc_id]['avg_score'] = result['score'] / result['metadata']['chunks']
+            # refined_results[doc_id]['_id'] = result['metadata']['_id']
+            # refined_results[doc_id]['avg_score'] = result['score'] / result['metadata']['chunks']
             refined_results[doc_id]['max_score'] = result['score']
             for key, values in result['metadata'].items():
                 refined_results[doc_id][key] = values
-            refined_results[doc_id]['rationale'] = closest_query_phrase_match(result['metadata']['description'], query, synonyms)
+            refined_results[doc_id]['rationale'] = closest_query_phrase_match(result['metadata']['description'], query_stemmed_set, stem_to_query_map)
         else:
-            refined_results[doc_id]['avg_score'] += result['score'] / result['metadata']['chunks']
+            # refined_results[doc_id]['avg_score'] += result['score'] / result['metadata']['chunks']
             if result['score'] > refined_results[doc_id]['max_score']:
                 refined_results[doc_id]['max_score'] = result['score']
     
     return refined_results
 
 if __name__ == "__main__":
-    bm25_model_filename = "bm25.pkl"
     
+    bm25_model_filename = "bm25.pkl"
     st.title("Partify Venue Search")
     
     # Input fields
@@ -211,11 +285,11 @@ if __name__ == "__main__":
     query = st.text_input("Search Query:", "martial arts")
     main_grid = st.container()
     with main_grid:
-        cols = st.columns([1,1,1,2,2,4])
+        cols = st.columns([1,1,1,2,2,2,3])
         zip = cols[0].text_input("Zipcode:", "98045")
         radius = int(cols[1].text_input("Miles:", "200"))
         alpha = float(cols[2].text_input("Alpha:", value="0.75"))
-        synonyms = cols[5].checkbox("Synomyms for rationale", value=True)
+        synonyms = cols[6].checkbox("Synomyms for rationale", value=True)
         model_name = cols[3].radio("Language Model", ["bge", "mpnet"])
         if model_name == "bge":
             baai_model = True
@@ -226,19 +300,34 @@ if __name__ == "__main__":
             bm25 = True
         else:
             bm25 = False
+        
+        chunking = cols[5].radio("Chunking", ["fixed", "markdown"])
+        if chunking == "fixed":
+            fixed = True
+        else:
+            fixed = False
     
         if not query and not interest:
             st.warning("Enter either the search query or child's interest. When both are given, search query is used")
         if not query and interest:
             query = interest    
-    
+
+        index, namespace = init_pinecone_db(baai_model, bm25, fixed)
         if query:
         # Search button
-            if cols[5].button("Search"):
+            if cols[6].button("Search"):
                 # Perform search based on user inputs
+                start_time = time.time()
                 results = search_venues(zip, radius, clean_query(query), synonyms, baai_model, bm25, alpha)
+                end_time = time.time()
+                total_time = end_time - start_time
+                pre_db_call_time = db_call_start - start_time
+                db_call_time = db_call_end - db_call_start
+                post_db_call_time = end_time - db_call_end
+
+                print(f"{namespace}, {pre_db_call_time}, {db_call_time}, {post_db_call_time}, {total_time}")
                 search_results = pd.DataFrame(results).transpose().reset_index(drop=True)
 
                 # Display the search results table with custom styling
-                st.dataframe(search_results[['name', '_id', 'max_score', 'avg_score', 'ratings', 'rationale', 'site', 'description']])
+                st.dataframe(search_results[['name', '_id', 'address', 'max_score', 'ratings', 'partify_place_type', 'thumb_url', 'rationale', 'description']])
 

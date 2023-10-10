@@ -35,7 +35,7 @@ def init_pinecone_db(baai_model, bm25, fixed_length_chunks):
     else:
         namespace = "M2_"
     
-    if not fixed:
+    if not fixed_length_chunks:
         namespace += "C3_"
     else:
         namespace += "C2_"

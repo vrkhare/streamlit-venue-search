@@ -27,8 +27,15 @@ def init_pinecone_db(baai_model, bm25, fixed_length_chunks):
     environment=config.PINECONE_ENV
     api_key = st.secrets["PINECONE_API_KEY"]
     pinecone_index_name = config.PINECONE_INDEX_NAME
-    # api_key = st.secrets["PINECONE_API_KEY_BM25"]
-    # pinecone_index_name = config.PINECONE_INDEX_NAME_BM25
+    info_db = True
+    info_db_p1 = False
+    if info_db:
+        api_key = st.secrets["PINECONE_API_KEY_BM25"]
+    elif info_db_p1:
+        # PINECONE paid
+        api_key = st.secrets["PINECONE_API_KEY_INFO_P1"]
+        environment = config.PINECONE_ENV_INFO_P1
+
     namespace = ""
     if not baai_model:
         namespace = "M1_"
@@ -287,9 +294,9 @@ if __name__ == "__main__":
     with main_grid:
         cols = st.columns([1,1,1,2,2,2,3])
         zip = cols[0].text_input("Zipcode:", "98045")
-        radius = int(cols[1].text_input("Miles:", "200"))
+        radius = int(cols[1].text_input("Miles:", "50"))
         alpha = float(cols[2].text_input("Alpha:", value="0.75"))
-        synonyms = cols[6].checkbox("Synomyms for rationale", value=True)
+        synonyms = cols[6].checkbox("Synomyms for rationale", value=False)
         model_name = cols[3].radio("Language Model", ["bge", "mpnet"])
         if model_name == "bge":
             baai_model = True
@@ -301,7 +308,7 @@ if __name__ == "__main__":
         else:
             bm25 = False
         
-        chunking = cols[5].radio("Chunking", ["fixed", "markdown"])
+        chunking = cols[5].radio("Chunking", ["markdown", "fixed"])
         if chunking == "fixed":
             fixed = True
         else:
@@ -324,10 +331,13 @@ if __name__ == "__main__":
                 pre_db_call_time = db_call_start - start_time
                 db_call_time = db_call_end - db_call_start
                 post_db_call_time = end_time - db_call_end
-
-                print(f"{namespace}, {pre_db_call_time}, {db_call_time}, {post_db_call_time}, {total_time}")
+                
                 search_results = pd.DataFrame(results).transpose().reset_index(drop=True)
-
+                out_string = f"{query}\t{zip}\t{radius}\t{len(search_results)}\t{config.NUM_CHUNK_IN_RESULTS}\t{namespace}\t{alpha}\t{pre_db_call_time}\t{db_call_time}\t{post_db_call_time}\t{total_time}"
+                # print(out_string)
+                file = open('benchmarking.csv', 'a')
+                file.write(out_string+"\n")
+                file.close()
                 # Display the search results table with custom styling
-                st.dataframe(search_results[['name', '_id', 'address', 'max_score', 'ratings', 'partify_place_type', 'thumb_url', 'rationale', 'description']])
+                st.dataframe(search_results[['name', 'partify_place_type', 'rationale', 'max_score', 'description', '_id', 'address', 'ratings', 'thumb_url']])
 

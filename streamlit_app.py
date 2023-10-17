@@ -147,6 +147,7 @@ def hybrid_query(question, zipc_list, baai_model, bm25, alpha, top_k):
 def get_query_tokens(synonyms, search_query):
     syn_set = set()
     syn_to_query_map = {}
+    interests_stemmed = {stemmer.stem(i).lower() for i in config.interests}
     orig_query_len = len(search_query.split())
 
     if synonyms:
@@ -168,20 +169,28 @@ def get_query_tokens(synonyms, search_query):
     for i in range(len(query_tokens)):
         # unigrams
         token = query_tokens[i]
-        stem = stemmer.stem(token).lower()
-        query_stemmed_set.add(stem)
         query_word = token
         if token in syn_to_query_map:
             query_word = syn_to_query_map[token]
-        stem_to_query_map[stem] = query_word
+        query_stem = stemmer.stem(query_word).lower()
+        if query_stem in interests_stemmed:
+            query_stemmed_set.add(query_stem)
+            stem = stemmer.stem(token).lower()
+            stem_to_query_map[stem] = query_word
+        
         #bigrams - only with original tokens
         if i < orig_query_len - 1:
             next_token = query_tokens[i+1]
             stem_next = stemmer.stem(next_token).lower()
-            stem_bigram = " ".join([stem, stem_next])
-            orig_bigram = " ".join([token, next_token])
-            query_stemmed_set.add(stem_bigram)
-            stem_to_query_map[stem_bigram] = orig_bigram
+            # stem_bigram = " ".join([stem, stem_next])
+            # orig_bigram = " ".join([token, next_token])
+            # effectively no stemming for bi-grams
+            stem_bigram = " ".join([query_word, next_token])             # only stem the second word in the bigram
+            orig_bigram = " ".join([query_word, next_token])
+            if stem_bigram in config.interests:
+                query_stemmed_set.add(stem_bigram)
+                stem_to_query_map[stem_bigram] = orig_bigram
+
     return query_stemmed_set, stem_to_query_map
 
 
@@ -199,19 +208,21 @@ def closest_query_phrase_match(text_segment, query_stemmed_set, stem_to_query_ma
     text_segment = clean_query(text_segment)
     
     # Tokenize 
-    doc_tokens = text_segment.split()
+    doc_tokens = [t.lower() for t in text_segment.split()]
 
     # Stem tokens
     doc_stems = [stemmer.stem(token).lower() for token in doc_tokens] 
     # print(f"query_stemmed_set:{query_stemmed_set}")
     # print(f"doc_stems: {doc_stems}")
 
+    # gather all the words in query_stemmed_set
+    unique_words = {word.strip().lower() for phrase in query_stemmed_set for word in phrase.split()}
     # Calculate unigram and bi-gram frequencies in the doc
     doc_unigram_frequency_map = {}
     doc_bigram_frequency_map = {}
     for i in range(len(doc_stems)):
         token = doc_stems[i]
-        if token in query_stemmed_set:
+        if token in unique_words:
             if token in stem_to_query_map:
                 query_token = stem_to_query_map[token] 
             else:
@@ -223,7 +234,8 @@ def closest_query_phrase_match(text_segment, query_stemmed_set, stem_to_query_ma
                 doc_unigram_frequency_map[query_token] = 1
             if i < len(doc_stems)-1:
                 next_token = doc_stems[i+1]
-                bigram = " ".join([token, next_token])
+                # bigram = " ".join([token, next_token])
+                bigram = " ".join([doc_tokens[i], doc_tokens[i+1]])
                 if next_token in stem_to_query_map:
                     query_next_token = stem_to_query_map[next_token] 
                 else:

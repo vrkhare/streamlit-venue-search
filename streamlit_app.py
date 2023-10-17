@@ -307,20 +307,20 @@ if __name__ == "__main__":
         cols = st.columns([1,1,1,2,2,2,3])
         zip = cols[0].text_input("Zipcode:", "98045")
         radius = int(cols[1].text_input("Miles:", "50"))
-        alpha = float(cols[2].text_input("Alpha:", value="0.75"))
-        synonyms = cols[6].checkbox("Synomyms for rationale", value=False)
+        alpha = float(cols[2].text_input("Alpha:", value="1.0"))
+        synonyms = cols[6].checkbox("Synomyms for rationale", value=True)
         model_name = cols[3].radio("Language Model", ["bge", "mpnet"])
         if model_name == "bge":
             baai_model = True
         else: 
             baai_model = False
-        sparse_embed = cols[4].radio("Sparse Embedding", ["bm25", "counter"])
+        sparse_embed = cols[4].radio("Sparse Embedding", ["counter", "bm25"])
         if sparse_embed == "bm25":
             bm25 = True
         else:
             bm25 = False
         
-        chunking = cols[5].radio("Chunking", ["markdown", "fixed"])
+        chunking = cols[5].radio("Chunking", ["fixed", "markdown"])
         if chunking == "fixed":
             fixed = True
         else:
